@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+.vite/
+
+# Databases & logs
+*.db
+*.db-journal
+*.log
+backend.log
+frontend.log
+
+# Sessions & secrets
+.session.json
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.spec
+RequestBot.exe
+fix_pass.py
+create_shortcut.py
+reset-admin-pass.py
