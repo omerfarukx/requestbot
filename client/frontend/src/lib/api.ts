@@ -51,6 +51,7 @@ export interface Campaign {
   daily_visit_target: number | null;
   pages_per_session_min: number;
   pages_per_session_max: number;
+  mode: "http" | "browser";
   status: "idle" | "running" | "stopped";
   total_visits: number;
   successful_visits: number;
@@ -66,7 +67,7 @@ export interface Proxy {
   username: string | null;
   password: string | null;
   protocol: string;
-  status: "unknown" | "active" | "dead";
+  status: "unknown" | "active" | "dead" | "cooldown";
   last_checked: string | null;
   created_at: string;
 }
@@ -133,6 +134,8 @@ export const api = {
       http.post<{ added: number; total: number }>("/proxies/webshare-refresh", { api_key: api_key ?? "" }).then((r) => r.data),
     testAll: () =>
       http.post<{ tested: number; active: number; dead: number }>("/proxies/test-all").then((r) => r.data),
+    usage: () =>
+      http.get<{ proxy_id: number; visits: number; estimated_mb: number }[]>("/proxies/usage").then((r) => r.data),
   },
   logs: {
     list: (campaign_id?: number) =>

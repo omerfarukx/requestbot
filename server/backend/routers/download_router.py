@@ -1,24 +1,31 @@
 """Lisansli .exe indirme."""
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import get_current_user
-from models import User
+from database import get_db
+from models import User, ActivityLog
 
 router = APIRouter(prefix="/api/download", tags=["download"])
 
-DOWNLOADS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "downloads")
+_default_downloads = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "downloads")
+DOWNLOADS_DIR = os.environ.get("DOWNLOADS_DIR", _default_downloads)
 LATEST_EXE = "RequestBot.exe"
 
 
 @router.get("/latest")
-async def download_latest(user: User = Depends(get_current_user)):
+async def download_latest(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """RequestBot.exe indir — sadece aktif lisansi olan."""
     if user.role != "admin":
-        if not user.license_expires_at or user.license_expires_at < datetime.utcnow():
+        if not user.license_expires_at or user.license_expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
             raise HTTPException(403, "Lisans suresi dolmus")
         if user.plan == "free":
             raise HTTPException(403, "Aktif lisans yok")
@@ -26,6 +33,13 @@ async def download_latest(user: User = Depends(get_current_user)):
     path = os.path.join(DOWNLOADS_DIR, LATEST_EXE)
     if not os.path.isfile(path):
         raise HTTPException(404, "Henuz dosya yuklenmedi")
+
+    db.add(ActivityLog(
+        user_id=user.id, event="download",
+        ip=request.client.host if request.client else None,
+        detail=LATEST_EXE,
+    ))
+    await db.commit()
 
     return FileResponse(
         path,

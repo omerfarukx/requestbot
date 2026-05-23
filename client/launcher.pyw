@@ -1,11 +1,37 @@
+import sys
+import os
+
+# ── EXE backend-subprocess modu ────────────────────────────────────────────────
+if len(sys.argv) > 1 and sys.argv[1] == "--subprocess-backend":
+    import importlib.util
+    _meipass = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    _backend = os.path.join(_meipass, "backend")
+
+    # Frozen EXE: Playwright browser'ı gerçek kurulum dizininde ara
+    _local_app = os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))
+    _pw_path = os.path.join(_local_app, "ms-playwright")
+    if os.path.isdir(_pw_path):
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = _pw_path
+    # Tüm backend bağımlılıklarını sys.path'e ekle
+    if _backend not in sys.path:
+        sys.path.insert(0, _backend)
+    # main.py'yi DOSYA YOLUNDAN yükle (PYZ cache karışmasın)
+    _main_py = os.path.join(_backend, "main.py")
+    _spec = importlib.util.spec_from_file_location("__main_app__", _main_py)
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules["__main_app__"] = _mod
+    _spec.loader.exec_module(_mod)
+    import uvicorn
+    uvicorn.run(_mod.app, host="127.0.0.1", port=8000, log_level="error")
+    sys.exit(0)
+# ───────────────────────────────────────────────────────────────────────────────
+
 import customtkinter as ctk
 import tkinter as tk
 import subprocess
 import threading
 import webbrowser
 import winreg
-import sys
-import os
 import time
 import atexit
 import ctypes
@@ -17,14 +43,17 @@ from PIL import Image, ImageDraw, ImageFont
 import pystray
 
 # License client (sunucudan auth + lisans)
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_launcher_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _launcher_dir)
 import license_client
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = _launcher_dir
 BACKEND_DIR = os.path.join(BASE_DIR, "backend")
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 APP_NAME = "RequestHitBot"
 REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+CURRENT_VERSION = "1.0.0"
+VERSION_URL = "https://requesthitbot.com/download/version.json"
 
 # ========== SINGLE INSTANCE LOCK ==========
 _MUTEX_NAME = "Global\\RequestHitBot_Client_SingleInstance"
@@ -55,7 +84,7 @@ _check_single_instance()
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
-_ICON_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logo.ico")
+_ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.ico")
 
 COLORS = {
     "bg":       "#0b0f1a",
@@ -86,33 +115,56 @@ def is_port_open(port: int) -> bool:
 
 
 def create_logo_image(size: int = 256) -> Image.Image:
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    r = size // 5
-    # Rounded square — koyu indigo
-    d.rounded_rectangle([0, 0, size - 1, size - 1], radius=r, fill=(79, 70, 229, 255))
-    # Subtle top highlight
-    d.rounded_rectangle([0, 0, size - 1, size // 2], radius=r, fill=(120, 100, 255, 55))
-    # "R" harfi
+    """Gradient rounded square + R + signal dot — matches web favicon design."""
+    TOP_C = (99, 102, 241)
+    BOT_C = (124,  58, 237)
+
+    grad = Image.new("RGBA", (size, size))
+    gd   = ImageDraw.Draw(grad)
+    for i in range(size):
+        t = i / max(size - 1, 1)
+        col = (int(TOP_C[0] + (BOT_C[0] - TOP_C[0]) * t),
+               int(TOP_C[1] + (BOT_C[1] - TOP_C[1]) * t),
+               int(TOP_C[2] + (BOT_C[2] - TOP_C[2]) * t), 255)
+        gd.line([(0, i), (size - 1, i)], fill=col)
+
+    radius = max(size // 5, 3)
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=255)
+    grad.putalpha(mask)
+
+    d = ImageDraw.Draw(grad)
     font_paths = [
         "C:/Windows/Fonts/segoeuib.ttf",
+        "C:/Windows/Fonts/calibrib.ttf",
         "C:/Windows/Fonts/arialbd.ttf",
         "C:/Windows/Fonts/arial.ttf",
     ]
     fnt = None
     for fp in font_paths:
         try:
-            fnt = ImageFont.truetype(fp, int(size * 0.55))
+            fnt = ImageFont.truetype(fp, int(size * 0.56))
             break
         except Exception:
             pass
     if fnt is None:
         fnt = ImageFont.load_default()
     bbox = d.textbbox((0, 0), "R", font=fnt)
-    tx = (size - (bbox[2] - bbox[0])) // 2 - bbox[0]
-    ty = (size - (bbox[3] - bbox[1])) // 2 - bbox[1]
-    d.text((tx, ty), "R", font=fnt, fill=(255, 255, 255, 245))
-    return img
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    tx = (size - tw) // 2 - bbox[0]
+    ty = (size - th) // 2 - bbox[1] - int(size * 0.03)
+    if size >= 48:
+        d.text((tx + max(size // 40, 1), ty + max(size // 40, 1)), "R", font=fnt, fill=(0, 0, 0, 70))
+    d.text((tx, ty), "R", font=fnt, fill=(255, 255, 255, 252))
+
+    if size >= 64:
+        dr = max(size // 14, 3)
+        dx, dy = int(size * 0.74), int(size * 0.72)
+        d.ellipse([dx - dr - max(size//22,2), dy - dr - max(size//22,2),
+                   dx + dr + max(size//22,2), dy + dr + max(size//22,2)], fill=(255, 255, 255, 50))
+        d.ellipse([dx - dr, dy - dr, dx + dr, dy + dr], fill=(255, 255, 255, 230))
+
+    return grad
 
 
 def create_tray_icon_image():
@@ -316,12 +368,38 @@ class App(ctk.CTk):
 
     def _auto_start(self):
         """Login sonrasi otomatik baslatma."""
-        if is_port_open(8000) and is_port_open(3000):
+        threading.Thread(target=self._check_for_update, daemon=True).start()
+        if is_port_open(8000):
             self._log("✅ Servisler zaten çalışıyor — panel açılıyor…")
             self._do_sso_and_open()
         elif not self.backend_proc and not self.frontend_proc:
             self._log("🔄 Otomatik başlatılıyor…")
             self._start_services()
+
+    def _check_for_update(self):
+        """Sunucudan versiyon kontrol et, yenisi varsa bildirim goster."""
+        try:
+            import json as _json
+            req = urllib.request.Request(VERSION_URL, headers={"User-Agent": "RequestBot"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data = _json.loads(r.read())
+            server_ver = data.get("version", "0.0.0")
+            dl_url = data.get("download_url", VERSION_URL)
+            notes = data.get("release_notes", "")
+            if server_ver != CURRENT_VERSION:
+                self.after(0, lambda: self._show_update_banner(server_ver, dl_url, notes))
+        except Exception:
+            pass
+
+    def _show_update_banner(self, new_ver: str, dl_url: str, notes: str):
+        """Guncelleme bildirimini log kutusuna ve popup olarak goster."""
+        self._log(f"🆕 Yeni sürüm mevcut: v{new_ver}  —  {notes}")
+        import tkinter.messagebox as mb
+        if mb.askyesno(
+            "Güncelleme Mevcut",
+            f"RequestBot v{new_ver} yayınlandı!\n\n{notes}\n\nŞimdi indirmek ister misiniz?",
+        ):
+            webbrowser.open(dl_url)
 
     def _do_sso_and_open(self, force: bool = False):
         """SSO token al, tarayiciyi ac."""
@@ -334,7 +412,7 @@ class App(ctk.CTk):
         """SSO endpoint'ini cagir, local JWT al, tarayiciyi ac."""
         import json as _json
         if not self._auth_token or not self._auth_user:
-            webbrowser.open("http://localhost:3000")
+            webbrowser.open("http://localhost:8000")
             return
         url = "http://localhost:8000/api/auth/sso"
         body = _json.dumps({
@@ -353,7 +431,7 @@ class App(ctk.CTk):
                     local_token = data.get("access_token", "")
                     if local_token:
                         webbrowser.open(
-                            f"http://localhost:3000/sso?t={urllib.parse.quote(local_token)}"
+                            f"http://localhost:8000/sso?t={urllib.parse.quote(local_token)}"
                         )
                         return
             except Exception as e:
@@ -364,7 +442,7 @@ class App(ctk.CTk):
                     pass
                 if attempt < 4:
                     time.sleep(1)
-        webbrowser.open("http://localhost:3000")
+        webbrowser.open("http://localhost:8000")
 
     def _start_services(self):
         self.start_btn.configure(state="disabled", text="Başlatılıyor…")
@@ -383,15 +461,25 @@ class App(ctk.CTk):
                     )
                     time.sleep(1)
 
-            # python.exe kullan (pythonw degil) — uvicorn stdout istiyor
-            exe = sys.executable.replace("pythonw.exe", "python.exe")
-            log_file = open(os.path.join(BASE_DIR, "backend.log"), "w", encoding="utf-8")
-            self.backend_proc = subprocess.Popen(
-                [exe, "-m", "uvicorn", "main:app", "--port", "8000"],
-                cwd=BACKEND_DIR,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                stdout=log_file, stderr=subprocess.STDOUT,
-            )
+            log_dir = os.path.join(os.environ.get("APPDATA", BASE_DIR), "RequestBot")
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = open(os.path.join(log_dir, "backend.log"), "w", encoding="utf-8")
+            if getattr(sys, "frozen", False):
+                # Frozen EXE: kendini --subprocess-backend moduyla baslatiyoruz
+                self.backend_proc = subprocess.Popen(
+                    [sys.executable, "--subprocess-backend"],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    stdout=log_file, stderr=subprocess.STDOUT,
+                )
+            else:
+                # Dev modu: python.exe -m uvicorn
+                exe = sys.executable.replace("pythonw.exe", "python.exe")
+                self.backend_proc = subprocess.Popen(
+                    [exe, "-m", "uvicorn", "main:app", "--port", "8000"],
+                    cwd=BACKEND_DIR,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    stdout=log_file, stderr=subprocess.STDOUT,
+                )
             # Backend portu acilana kadar bekle (max 15sn)
             for i in range(15):
                 time.sleep(1)
@@ -408,20 +496,6 @@ class App(ctk.CTk):
                     self.after(0, lambda: self._log(f"❌ Backend çöktü: {tail.strip()}"))
                     self.after(0, lambda: self.start_btn.configure(state="normal", text="▶   Sistemi Başlat"))
                     return
-            self.after(0, lambda: self._log("Frontend başlatılıyor…"))
-            frontend_log = open(os.path.join(BASE_DIR, "frontend.log"), "w", encoding="utf-8")
-            self.frontend_proc = subprocess.Popen(
-                ["npm.cmd", "run", "dev"],
-                cwd=FRONTEND_DIR,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                stdout=frontend_log, stderr=subprocess.STDOUT,
-                shell=True,
-            )
-            # Frontend portu acilana kadar bekle (max 30sn)
-            for i in range(30):
-                time.sleep(1)
-                if is_port_open(3000):
-                    break
             self.after(0, self._check_and_update_status)
         except Exception as e:
             self.after(0, lambda: self._log(f"❌ Başlatma hatası: {e}"))
@@ -429,18 +503,15 @@ class App(ctk.CTk):
 
     def _check_and_update_status(self):
         backend_up = is_port_open(8000)
-        frontend_up = is_port_open(3000)
-        self._update_status(backend_up, frontend_up)
-        if backend_up and frontend_up:
+        self._update_status(backend_up, backend_up)
+        if backend_up:
             self.start_btn.configure(state="disabled", text="▶   Sistemi Başlat")
             self.stop_btn.configure(state="normal", text="■  Durdur")
-            self._log("✅ Sistem hazır — http://localhost:3000")
+            self._log("✅ Sistem hazır — http://localhost:8000")
             self._do_sso_and_open()
-        elif not backend_up:
+        else:
             self._log("❌ Backend yanıt vermiyor")
             self.start_btn.configure(state="normal", text="▶   Sistemi Başlat")
-        else:
-            self._log("⚠️ Frontend yanıt vermiyor")
 
     def _kill_tree(self, proc):
         """Tum alt process'leri dahil ederek oldurmek icin taskkill kullan."""
@@ -473,7 +544,7 @@ class App(ctk.CTk):
         # Port tamamen kapanana kadar bekle (max 5sn)
         for _ in range(10):
             time.sleep(0.5)
-            if not is_port_open(8000) and not is_port_open(3000):
+            if not is_port_open(8000):
                 break
         self.after(0, lambda: self.start_btn.configure(state="normal", text="▶   Sistemi Başlat"))
         self.after(0, lambda: self.stop_btn.configure(state="disabled", text="■  Durdur"))
@@ -483,12 +554,11 @@ class App(ctk.CTk):
     def _poll_status(self):
         def check():
             backend_up = is_port_open(8000)
-            frontend_up = is_port_open(3000)
-            self.after(0, lambda: self._update_status(backend_up, frontend_up))
+            self.after(0, lambda: self._update_status(backend_up, backend_up))
 
             # Proc yoksa ama port aciksa -> yabanci process, butonu duzelt
             def sync_buttons():
-                we_own = self.backend_proc is not None or self.frontend_proc is not None
+                we_own = self.backend_proc is not None
                 if not we_own:
                     self.start_btn.configure(state="normal", text="▶   Sistemi Başlat")
                     self.stop_btn.configure(state="disabled")
@@ -562,7 +632,7 @@ class App(ctk.CTk):
 
         menu = pystray.Menu(
             pystray.MenuItem("Aç / Göster", on_open, default=True),
-            pystray.MenuItem("Paneli Aç", lambda i, it: webbrowser.open("http://localhost:3000")),
+            pystray.MenuItem("Paneli Aç", lambda i, it: webbrowser.open("http://localhost:8000")),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Çıkış", on_quit),
         )

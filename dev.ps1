@@ -8,9 +8,10 @@
 #   .\dev.ps1 server   -> Sadece server tarafi
 #   .\dev.ps1 client   -> Sadece client tarafi (launcher dahil)
 #   .\dev.ps1 logs     -> Son loglari goster
+#   .\dev.ps1 deploy   -> Sunucuya deploy et (build + scp + ssh restart)
 
 param(
-  [ValidateSet("start", "stop", "status", "reset", "server", "client", "logs")]
+  [ValidateSet("start", "stop", "status", "reset", "server", "client", "logs", "deploy")]
   [string]$Command = "start"
 )
 
@@ -162,6 +163,79 @@ switch ($Command) {
       Write-Host "--- $($_.Name) ---" -ForegroundColor Yellow
       Get-Content $_.FullName -Tail 10
     }
+  }
+
+  "deploy" {
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "  RequestBot Tam Deploy Basladi"             -ForegroundColor Cyan
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host ""
+
+    # 1. Client frontend build (exe icin)
+    Write-Host "-> [1/5] Client frontend build..." -ForegroundColor Yellow
+    & $NPM --prefix (Join-Path $ROOT "client\frontend") run build
+    if ($LASTEXITCODE -ne 0) { Write-Host "HATA: client frontend build basarisiz!" -ForegroundColor Red; exit 1 }
+    Write-Host "   OK" -ForegroundColor Green
+
+    # 2. PyInstaller ile RequestBot.exe
+    Write-Host "-> [2/5] PyInstaller - RequestBot.exe olusturuluyor..." -ForegroundColor Yellow
+    & $PYTHON -m PyInstaller RequestBot.spec --noconfirm 2>&1 | ForEach-Object {
+      if ($_ -match "ERROR|error") { Write-Host "   $_" -ForegroundColor Red }
+    }
+    if ($LASTEXITCODE -ne 0) { Write-Host "HATA: PyInstaller basarisiz!" -ForegroundColor Red; exit 1 }
+    $exeSrc = Join-Path $ROOT "dist\RequestBot.exe"
+    if (-not (Test-Path $exeSrc)) { Write-Host "HATA: dist\RequestBot.exe bulunamadi!" -ForegroundColor Red; exit 1 }
+    $downloadsDir = Join-Path $ROOT "server\downloads"
+    if (-not (Test-Path $downloadsDir)) { New-Item -ItemType Directory -Path $downloadsDir | Out-Null }
+    Copy-Item $exeSrc (Join-Path $downloadsDir "RequestBot.exe") -Force
+    Write-Host "   RequestBot.exe -> server\downloads\  OK" -ForegroundColor Green
+
+    # 3. Server frontend build
+    Write-Host "-> [3/5] Server frontend build..." -ForegroundColor Yellow
+    & $NPM --prefix (Join-Path $ROOT "server\frontend") run build
+    if ($LASTEXITCODE -ne 0) { Write-Host "HATA: server frontend build basarisiz!" -ForegroundColor Red; exit 1 }
+    Write-Host "   OK" -ForegroundColor Green
+
+    # 4. SCP: frontend dist + backend Python
+    Write-Host "-> [4/5] Kod dosyalari sunucuya aktariliyor..." -ForegroundColor Yellow
+    $scpDist    = "requestbot:/tmp/requestbot_dist"
+    $scpBackend = "requestbot:/tmp/requestbot_backend"
+    scp -o ServerAliveInterval=30 -o ServerAliveCountMax=5 -r (Join-Path $ROOT "server\frontend\dist") $scpDist
+    if ($LASTEXITCODE -ne 0) { Write-Host "HATA: SCP dist basarisiz!" -ForegroundColor Red; exit 1 }
+    scp -o ServerAliveInterval=30 -o ServerAliveCountMax=5 -r (Join-Path $ROOT "server\backend") $scpBackend
+    if ($LASTEXITCODE -ne 0) { Write-Host "HATA: SCP backend basarisiz!" -ForegroundColor Red; exit 1 }
+    Write-Host "   OK" -ForegroundColor Green
+
+    # 5. SSH: dosyalari yerles + servisi yeniden baslat
+    Write-Host "-> [5/5] SSH: servis guncelleniyor..." -ForegroundColor Yellow
+    ssh requestbot @'
+set -e
+cd /opt/requestbot
+git pull
+rsync -a --exclude='.venv' --exclude='__pycache__' --exclude='*.db' /tmp/requestbot_backend/ server/backend/
+rm -rf /tmp/requestbot_backend
+/opt/requestbot/server/backend/.venv/bin/pip install -r server/backend/requirements.txt -q
+rm -rf server/frontend/dist
+mv /tmp/requestbot_dist server/frontend/dist
+systemctl restart requestbot 2>/dev/null || supervisorctl restart requestbot 2>/dev/null || true
+echo "[Deploy] Tamamlandi!"
+'@
+    if ($LASTEXITCODE -ne 0) { Write-Host "HATA: SSH komutu basarisiz!" -ForegroundColor Red; exit 1 }
+
+    # 6. SCP: RequestBot.exe (buyuk dosya, son adim)
+    Write-Host "-> [6/6] RequestBot.exe yukleniyor (buyuk dosya, bekleyiniz)..." -ForegroundColor Yellow
+    $scpExeDest = "requestbot:/opt/requestbot/server/downloads/RequestBot.exe"
+    scp -o ServerAliveInterval=60 -o ServerAliveCountMax=20 -C (Join-Path $downloadsDir "RequestBot.exe") $scpExeDest
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "UYARI: Exe yuklemesi basarisiz - kod degisiklikleri deploy edildi, exe eski kaldi." -ForegroundColor Yellow
+    } else {
+      Write-Host "   OK" -ForegroundColor Green
+    }
+
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host "  Deploy tamamlandi!  https://requesthitbot.com" -ForegroundColor Green
+    Write-Host "============================================" -ForegroundColor Green
   }
 
   default {

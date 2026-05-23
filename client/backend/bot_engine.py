@@ -14,6 +14,7 @@ TURKEY_TZ = timezone(timedelta(hours=3))
 _executor = ThreadPoolExecutor(max_workers=30)
 
 
+
 def _sync_get(url: str, headers: dict, proxy_url: str | None) -> tuple[int, str]:
     """Sync curl_cffi request — thread pool içinde çalışır."""
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
@@ -296,7 +297,7 @@ class BotEngine:
             "campaign_id": campaign_id,
             "level": level,
             "message": message,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         }
         for cb in list(self.log_subscribers):
             try:
@@ -348,6 +349,7 @@ class BotEngine:
                     return None
                 return {
                     "id": c.id,
+                    "user_id": c.user_id,
                     "name": c.name,
                     "target_url": c.target_url,
                     "keyword": c.keyword,
@@ -364,6 +366,7 @@ class BotEngine:
                     "bounce_rate_pct": c.bounce_rate_pct or 30,
                     "referrer_mix": c.referrer_mix or "google:70,direct:20,social:10",
                     "mobile_ratio_pct": c.mobile_ratio_pct or 65,
+                    "mode": c.mode or "http",
                     "status": c.status,
                     "total_visits": c.total_visits,
                 }
@@ -378,7 +381,7 @@ class BotEngine:
             async with self._db_factory() as db:
                 from models import Visit as VisitModel
                 from sqlalchemy import select, func
-                cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+                cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=minutes)
                 result = await db.execute(
                     select(func.count(VisitModel.id)).where(
                         VisitModel.campaign_id == campaign_id,
@@ -389,26 +392,60 @@ class BotEngine:
         except Exception:
             return 0
 
-    async def _get_proxy_list(self) -> List[Dict]:
+    async def _count_today_visits(self, campaign_id: int) -> int:
+        """Bugün (TR saati gece yarısından itibaren) yapılan başarılı ziyaret sayısı."""
+        if not self._db_factory:
+            return 0
+        try:
+            async with self._db_factory() as db:
+                from models import Visit as VisitModel
+                from sqlalchemy import select, func
+                now_tr = datetime.now(TURKEY_TZ)
+                midnight_tr = now_tr.replace(hour=0, minute=0, second=0, microsecond=0)
+                midnight_utc = midnight_tr.astimezone(timezone.utc).replace(tzinfo=None)
+                result = await db.execute(
+                    select(func.count(VisitModel.id)).where(
+                        VisitModel.campaign_id == campaign_id,
+                        VisitModel.started_at >= midnight_utc,
+                        VisitModel.status == "success",
+                    )
+                )
+                return result.scalar() or 0
+        except Exception:
+            return 0
+
+    async def _get_proxy_list(self, user_id: Optional[int] = None) -> List[Dict]:
         if not self._db_factory:
             return []
         try:
             async with self._db_factory() as db:
                 from models import Proxy as ProxyModel
                 from sqlalchemy import select
-                result = await db.execute(select(ProxyModel).where(ProxyModel.status != "dead"))
+                from sqlalchemy import or_
+                _cooldown_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=15)
+                q = select(ProxyModel).where(
+                    ProxyModel.status.notin_(["dead"]),
+                    or_(
+                        ProxyModel.status != "failed",
+                        ProxyModel.last_checked == None,
+                        ProxyModel.last_checked < _cooldown_cutoff,
+                    )
+                )
+                if user_id is not None:
+                    q = q.where(ProxyModel.user_id == user_id)
+                result = await db.execute(q)
                 proxies = result.scalars().all()
-                return [
-                    {
+                usable = []
+                for p in proxies:
+                    usable.append({
                         "id": p.id,
                         "host": p.host,
                         "port": p.port,
                         "username": p.username,
                         "password": p.password,
                         "protocol": p.protocol,
-                    }
-                    for p in proxies
-                ]
+                    })
+                return usable
         except Exception:
             return []
 
@@ -447,12 +484,15 @@ class BotEngine:
                         await asyncio.sleep(600)
                         continue
 
-                if campaign["daily_visit_target"] and campaign["total_visits"] >= campaign["daily_visit_target"]:
-                    await self._emit_log(campaign_id, "info", "📊 Günlük hedef tamamlandı, bekleniyor...")
-                    await asyncio.sleep(300)
-                    continue
+                if campaign["daily_visit_target"]:
+                    today_visits = await self._count_today_visits(campaign_id)
+                    if today_visits >= campaign["daily_visit_target"]:
+                        await self._emit_log(campaign_id, "info",
+                            f"📊 Günlük hedef tamamlandı ({today_visits}/{campaign['daily_visit_target']}), gece yarısına kadar bekleniyor...")
+                        await asyncio.sleep(300)
+                        continue
 
-                proxies = await self._get_proxy_list()
+                proxies = await self._get_proxy_list(user_id=campaign.get("user_id"))
                 if not proxies:
                     await self._emit_log(campaign_id, "warning", "⚠️ Proxy listesi boş — direkt bağlantı kullanılıyor")
 
@@ -488,7 +528,28 @@ class BotEngine:
 
     async def _bounded_session(self, sem: asyncio.Semaphore, campaign: Dict, proxy: Optional[Dict]):
         async with sem:
-            await self._run_session(campaign, proxy)
+            if campaign.get("mode") == "browser":
+                await self._run_browser_session(campaign, proxy)
+            else:
+                await self._run_session(campaign, proxy)
+
+    async def _run_browser_session(self, campaign: Dict, proxy: Optional[Dict]):
+        from gsc_engine_new import browser_visit_session
+        start_ts = time.time()
+        result = await browser_visit_session(campaign, proxy, self._emit_log)
+        duration = int(time.time() - start_ts)
+        proxy_id = proxy["id"] if proxy else None
+        await self._save_visit(
+            campaign["id"], proxy_id, duration,
+            result["pages_visited"], result["success"], result.get("error")
+        )
+        if proxy:
+            _err_l = (result.get("error") or "").lower()
+            if result["success"]:
+                await self._update_proxy_status(proxy["id"], "active")
+            elif any(w in _err_l for w in ("proxy", "connect", "timeout", "refused", "network", "tunnel")):
+                await self._update_proxy_status(proxy["id"], "failed")
+        # Browser modunda rotating proxy zaten farklı IP veriyor
 
     async def _run_session(self, campaign: Dict, proxy: Optional[Dict]):
         # Bounce session mi?
@@ -530,7 +591,7 @@ class BotEngine:
         user_agent = get_random_ua(mobile_pct=mobile_pct)
         device_type = "📱" if "Mobile" in user_agent or "iPhone" in user_agent or "Android" in user_agent else "💻"
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Google arama simülasyonu
         target_url = campaign["target_url"]
@@ -561,7 +622,19 @@ class BotEngine:
                 await self._emit_log(campaign["id"], "info",
                     f"🌐 [{proxy_label}] Google referrer ile gidiyor ('{active_keyword}')")
 
-        req_headers = {"User-Agent": user_agent, "Referer": google_referrer}
+        req_headers = {
+            "User-Agent": user_agent,
+            "Referer": google_referrer,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "cross-site" if google_referrer else "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+        }
 
         try:
             status, html = await loop.run_in_executor(
@@ -579,6 +652,7 @@ class BotEngine:
 
                 internal_links = self._extract_internal_links(html, campaign["target_url"])
                 end_ts = start_ts + session_duration
+                current_referer = campaign["target_url"]  # referer zinciri: her hop bir sonrakini besler
 
                 while pages_visited < pages_to_visit and time.time() < end_ts:
                     remaining = end_ts - time.time()
@@ -591,12 +665,16 @@ class BotEngine:
                         break
                     next_url = random.choice(internal_links)
                     try:
-                        sub_headers = {"User-Agent": user_agent, "Referer": campaign["target_url"]}
-                        sub_status, _ = await loop.run_in_executor(
+                        sub_headers = {"User-Agent": user_agent, "Referer": current_referer}
+                        sub_status, sub_html = await loop.run_in_executor(
                             _executor, lambda u=next_url: _sync_get(u, sub_headers, proxy_url)
                         )
                         if sub_status < 400:
                             pages_visited += 1
+                            current_referer = next_url  # bir sonraki hop bu URL'yi referans alır
+                            new_links = self._extract_internal_links(sub_html, campaign["target_url"])
+                            if new_links:
+                                internal_links = new_links  # yeni sayfadan iç linkleri güncelle
                             await self._emit_log(
                                 campaign["id"], "info",
                                 f"  ↳ [{proxy_label}] {next_url} → {sub_status}",
@@ -621,10 +699,13 @@ class BotEngine:
             tb = traceback.format_exc(limit=3)
             print(f"[BOT ERROR] campaign={campaign['id']} proxy={proxy_label} error={error_msg}\n{tb}")
             await self._emit_log(campaign["id"], "error", f"✗ [{proxy_label}] {type(e).__name__}: {error_msg}")
-            if proxy and "proxy" in error_msg.lower():
-                await self._update_proxy_status(proxy["id"], "dead")
+            if proxy:
+                _err_l = error_msg.lower()
+                if any(w in _err_l for w in ("proxy", "connect", "timeout", "refused", "network", "tunnel")):
+                    await self._update_proxy_status(proxy["id"], "failed")
 
-        await self._save_visit(campaign["id"], proxy_id, int(time.time() - start_ts), pages_visited, success, error_msg)
+        visit_started = datetime.fromtimestamp(start_ts, tz=timezone.utc).replace(tzinfo=None)
+        await self._save_visit(campaign["id"], proxy_id, int(time.time() - start_ts), pages_visited, success, error_msg, started_at=visit_started)
 
     def _extract_internal_links(self, html: str, base_url: str) -> List[str]:
         try:
@@ -652,7 +733,7 @@ class BotEngine:
                 p = result.scalar_one_or_none()
                 if p:
                     p.status = status
-                    p.last_checked = datetime.utcnow()
+                    p.last_checked = datetime.now(timezone.utc).replace(tzinfo=None)
                     await db.commit()
         except Exception:
             pass
@@ -669,7 +750,7 @@ class BotEngine:
                 keywords = _get_keywords_list(campaign["keyword"])
                 target_domain = urlparse(campaign["target_url"]).netloc
                 ua = get_random_ua()
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
 
                 for kw in keywords:
                     try:
@@ -717,10 +798,11 @@ class BotEngine:
                 pass
             await asyncio.sleep(6 * 3600)
 
-    async def _save_visit(self, campaign_id: int, proxy_id: Optional[int], duration: int, pages: int, success: bool, error: Optional[str]):
+    async def _save_visit(self, campaign_id: int, proxy_id: Optional[int], duration: int, pages: int, success: bool, error: Optional[str], started_at: Optional[datetime] = None):
         if not self._db_factory:
             return
         try:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             async with self._db_factory() as db:
                 from models import Campaign as CampaignModel, Visit as VisitModel
                 from sqlalchemy import select
@@ -732,12 +814,13 @@ class BotEngine:
                         c.successful_visits += 1
                     else:
                         c.failed_visits += 1
-                    c.updated_at = datetime.utcnow()
+                    c.updated_at = now
 
                 db.add(VisitModel(
                     campaign_id=campaign_id,
                     proxy_id=proxy_id,
-                    ended_at=datetime.utcnow(),
+                    started_at=started_at or (now - timedelta(seconds=duration)),
+                    ended_at=now,
                     duration_seconds=duration,
                     pages_visited=pages,
                     status="success" if success else "failed",

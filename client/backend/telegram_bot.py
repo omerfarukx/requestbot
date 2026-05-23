@@ -117,12 +117,12 @@ class TelegramBot:
 
     async def _build_daily_report(self) -> str:
         """Son 24 saatin özetini hazırlar."""
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
         from models import Visit, Campaign, RankCheck
         from sqlalchemy import func
 
         async with self.db_factory() as db:
-            cutoff = datetime.utcnow() - timedelta(hours=24)
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
 
             total_24h = await db.scalar(
                 select(func.count(Visit.id)).where(Visit.started_at >= cutoff)

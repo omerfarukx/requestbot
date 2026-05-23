@@ -1,6 +1,6 @@
 """JWT + bcrypt auth helpers."""
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
@@ -12,7 +12,15 @@ from sqlalchemy import select
 
 from database import get_db
 
-SECRET_KEY = os.environ.get("JWT_SECRET", "change-me-in-prod-min-32-chars-long-secret!")
+SECRET_KEY = os.environ.get("JWT_SECRET", "")
+if not SECRET_KEY:
+    import warnings
+    SECRET_KEY = "change-me-in-prod-min-32-chars-long-secret!"
+    warnings.warn(
+        "[GÜVENLİK] JWT_SECRET env degiskeni ayarlanmamis! "
+        "Uretimde mutlaka guvenli bir deger belirleyin.",
+        RuntimeWarning, stacklevel=2,
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 gün
 
@@ -32,7 +40,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 

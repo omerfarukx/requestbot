@@ -1,5 +1,7 @@
 """Auth endpoints: register, login, me, license uzatma (admin)."""
-from datetime import datetime, timedelta
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from time import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, func
@@ -17,9 +19,19 @@ from auth import (
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+_rate_store: dict[str, list[float]] = defaultdict(list)
+
+def _check_rate(key: str, max_calls: int, window: int) -> None:
+    now = time()
+    _rate_store[key] = [t for t in _rate_store[key] if now - t < window]
+    if len(_rate_store[key]) >= max_calls:
+        raise HTTPException(429, f"Cok fazla istek. {window} saniye bekleyin.")
+    _rate_store[key].append(now)
+
 
 @router.post("/register", response_model=TokenResponse)
-async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
+async def register(request: Request, data: UserRegister, db: AsyncSession = Depends(get_db)):
+    _check_rate(f"reg:{request.client.host if request.client else '?'}", 5, 60)
     # E-posta veya kullanıcı adı kontrolü
     existing = await db.execute(
         select(User).where((User.email == data.email) | (User.username == data.username))
@@ -34,7 +46,7 @@ async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
     total = await db.scalar(select(func.count(User.id))) or 0
     role = "admin" if total == 0 else "user"
     plan = "agency" if total == 0 else "free"
-    license_exp = datetime.utcnow() + timedelta(days=3650) if total == 0 else None
+    license_exp = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=3650) if total == 0 else None
 
     user = User(
         email=data.email,
@@ -54,7 +66,8 @@ async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(request: Request, data: UserLogin, db: AsyncSession = Depends(get_db)):
+    _check_rate(f"login:{request.client.host if request.client else '?'}", 10, 60)
     result = await db.execute(
         select(User).where(
             (User.username == data.username) | (User.email == data.username)
@@ -124,8 +137,9 @@ async def admin_extend_license(
         raise HTTPException(404, "Kullanıcı bulunamadı")
 
     base = user.license_expires_at
-    if not base or base < datetime.utcnow():
-        base = datetime.utcnow()
+    _now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if not base or base < _now:
+        base = _now
     user.license_expires_at = base + timedelta(days=days)
     if user.plan == "free":
         user.plan = "pro"

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 import {
   Activity,
   CheckCircle,
@@ -35,22 +36,37 @@ function StatCard({
   label,
   value,
   color,
+  gradient,
+  index = 0,
 }: {
   icon: React.ElementType;
   label: string;
   value: number | string;
   color: string;
+  gradient: string;
+  index?: number;
 }) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-gray-400 text-sm">{label}</span>
-        <div className={`p-2 rounded-lg ${color}`}>
-          <Icon size={16} />
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.08, duration: 0.5, ease: "easeOut" }}
+      className="relative group overflow-hidden rounded-2xl p-5 border border-gray-800/60 cursor-default"
+      style={{ background: "rgba(10,10,20,0.85)", backdropFilter: "blur(16px)" }}
+      whileHover={{ scale: 1.02, borderColor: "rgba(99,102,241,0.4)" }}
+    >
+      <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 ${gradient} blur-3xl`} style={{ transform: "scale(1.5)" }} />
+      <div className="relative">
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-gray-400 text-xs font-medium uppercase tracking-widest">{label}</span>
+          <div className={`p-2.5 rounded-xl ${color}`}>
+            <Icon size={15} />
+          </div>
         </div>
+        <p className="text-3xl font-bold text-white tabular-nums">{value}</p>
+        <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${gradient} opacity-40 rounded-full`} />
       </div>
-      <p className="text-2xl font-bold text-white">{value}</p>
-    </div>
+    </motion.div>
   );
 }
 
@@ -100,90 +116,59 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-white">Dashboard</h1>
+      <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5 }}>
+        <h1 className="text-2xl font-bold text-white tracking-tight">Dashboard</h1>
         <p className="text-gray-500 text-sm mt-1">Genel bakış ve istatistikler</p>
-      </div>
+      </motion.div>
 
       <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
-        <StatCard
-          icon={Globe}
-          label="Toplam Ziyaret"
-          value={stats?.total_visits ?? 0}
-          color="bg-blue-500/10 text-blue-400"
-        />
-        <StatCard
-          icon={CheckCircle}
-          label="Başarılı"
-          value={stats?.successful_visits ?? 0}
-          color="bg-green-500/10 text-green-400"
-        />
-        <StatCard
-          icon={XCircle}
-          label="Başarısız"
-          value={(stats?.total_visits ?? 0) - (stats?.successful_visits ?? 0)}
-          color="bg-red-500/10 text-red-400"
-        />
-        <StatCard
-          icon={Play}
-          label="Çalışan Kampanya"
-          value={stats?.running_campaigns ?? 0}
-          color="bg-brand-500/10 text-brand-400"
-        />
-        <StatCard
-          icon={Activity}
-          label="Başarı Oranı"
-          value={`%${successRate}`}
-          color="bg-purple-500/10 text-purple-400"
-        />
-        <StatCard
-          icon={Shield}
-          label="Aktif Proxy"
-          value={`${stats?.active_proxies ?? 0} / ${stats?.total_proxies ?? 0}`}
-          color="bg-cyan-500/10 text-cyan-400"
-        />
+        <StatCard index={0} icon={Globe} label="Toplam Ziyaret" value={stats?.total_visits ?? 0}
+          color="bg-blue-500/15 text-blue-400" gradient="bg-gradient-to-br from-blue-500/10 to-transparent" />
+        <StatCard index={1} icon={CheckCircle} label="Başarılı" value={stats?.successful_visits ?? 0}
+          color="bg-green-500/15 text-green-400" gradient="bg-gradient-to-br from-green-500/10 to-transparent" />
+        <StatCard index={2} icon={XCircle} label="Başarısız" value={(stats?.total_visits ?? 0) - (stats?.successful_visits ?? 0)}
+          color="bg-red-500/15 text-red-400" gradient="bg-gradient-to-br from-red-500/10 to-transparent" />
+        <StatCard index={3} icon={Play} label="Çalışan Kampanya" value={stats?.running_campaigns ?? 0}
+          color="bg-indigo-500/15 text-indigo-400" gradient="bg-gradient-to-br from-indigo-500/10 to-transparent" />
+        <StatCard index={4} icon={Activity} label="Başarı Oranı" value={`%${successRate}`}
+          color="bg-purple-500/15 text-purple-400" gradient="bg-gradient-to-br from-purple-500/10 to-transparent" />
+        <StatCard index={5} icon={Shield} label="Aktif Proxy" value={`${stats?.active_proxies ?? 0} / ${stats?.total_proxies ?? 0}`}
+          color="bg-cyan-500/15 text-cyan-400" gradient="bg-gradient-to-br from-cyan-500/10 to-transparent" />
       </div>
 
       {hourlyChart.length > 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-gray-300 mb-4">
-            Son 24 Saatlik Trafik
-          </h2>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5, duration: 0.5 }}
+          className="rounded-2xl p-5 border border-gray-800/60" style={{ background: "rgba(10,10,20,0.85)" }}>
+          <h2 className="text-sm font-semibold text-gray-300 mb-4 uppercase tracking-widest">Son 24 Saatlik Trafik</h2>
           <ResponsiveContainer width="100%" height={240}>
             <AreaChart data={hourlyChart}>
               <defs>
                 <linearGradient id="gTotal" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.6} />
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.5} />
                   <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gSuccess" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#22c55e" stopOpacity={0.7} />
+                  <stop offset="5%" stopColor="#22c55e" stopOpacity={0.5} />
                   <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-              <XAxis dataKey="label" tick={{ fill: "#9ca3af", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
-              <Tooltip
-                contentStyle={{
-                  background: "#111827",
-                  border: "1px solid #374151",
-                  borderRadius: 8,
-                  color: "#f1f5f9",
-                }}
-              />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+              <XAxis dataKey="label" tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ background: "#0a0a14", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 12, color: "#f1f5f9", fontSize: 12 }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Area type="monotone" dataKey="Toplam" stroke="#6366f1" fill="url(#gTotal)" strokeWidth={2} />
-              <Area type="monotone" dataKey="Başarılı" stroke="#22c55e" fill="url(#gSuccess)" strokeWidth={2} />
+              <Area type="monotone" dataKey="Toplam" stroke="#6366f1" fill="url(#gTotal)" strokeWidth={2.5} dot={false} />
+              <Area type="monotone" dataKey="Başarılı" stroke="#22c55e" fill="url(#gSuccess)" strokeWidth={2.5} dot={false} />
             </AreaChart>
           </ResponsiveContainer>
-        </div>
+        </motion.div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {proxyHealth.length > 0 && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <h2 className="text-sm font-semibold text-gray-300 mb-4">Proxy Sağlık Durumu</h2>
+          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.65, duration: 0.5 }}
+            className="rounded-2xl p-5 border border-gray-800/60" style={{ background: "rgba(10,10,20,0.85)" }}>
+            <h2 className="text-sm font-semibold text-gray-300 mb-4 uppercase tracking-widest">Proxy Sağlık</h2>
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
                 <Pie
@@ -201,24 +186,16 @@ export default function Dashboard() {
                     <Cell key={i} fill={PROXY_COLORS[p.status] || "#64748b"} />
                   ))}
                 </Pie>
-                <Tooltip
-                  contentStyle={{
-                    background: "#111827",
-                    border: "1px solid #374151",
-                    borderRadius: 8,
-                    color: "#f1f5f9",
-                  }}
-                />
+                <Tooltip contentStyle={{ background: "#0a0a14", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 12, color: "#f1f5f9", fontSize: 12 }} />
               </PieChart>
             </ResponsiveContainer>
-          </div>
+          </motion.div>
         )}
 
         {chartData.length > 0 && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <h2 className="text-sm font-semibold text-gray-300 mb-4">
-              Kampanya Bazında Ziyaretler
-            </h2>
+          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.65, duration: 0.5 }}
+            className="rounded-2xl p-5 border border-gray-800/60" style={{ background: "rgba(10,10,20,0.85)" }}>
+            <h2 className="text-sm font-semibold text-gray-300 mb-4 uppercase tracking-widest">Kampanya Bazında Ziyaretler</h2>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
@@ -232,22 +209,23 @@ export default function Dashboard() {
                     color: "#f1f5f9",
                   }}
                 />
-                <Bar dataKey="Başarılı" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Başarısız" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Başarılı" fill="#22c55e" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="Başarısız" fill="#ef4444" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          </motion.div>
         )}
       </div>
 
       {campaigns.length === 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-10 text-center">
-          <Globe className="mx-auto text-gray-700 mb-3" size={40} />
-          <p className="text-gray-500">Henüz kampanya yok.</p>
-          <p className="text-gray-600 text-sm mt-1">
-            Kampanyalar sayfasından bir tane oluşturun.
-          </p>
-        </div>
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
+          className="rounded-2xl p-12 text-center border border-gray-800/60" style={{ background: "rgba(10,10,20,0.85)" }}>
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 flex items-center justify-center">
+            <Globe className="text-gray-600" size={28} />
+          </div>
+          <p className="text-gray-400 font-medium">Henüz kampanya yok.</p>
+          <p className="text-gray-600 text-sm mt-1">Kampanyalar sayfasından bir tane oluşturun.</p>
+        </motion.div>
       )}
     </div>
   );

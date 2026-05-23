@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
-from datetime import datetime
-from pydantic import BaseModel, EmailStr
+from datetime import datetime, timezone
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from typing import Optional, List
 
 from database import Base
@@ -20,7 +20,7 @@ class User(Base):
     plan = Column(String(20), default="free")           # "free" | "pro" | "agency"
     is_active = Column(Boolean, default=True)
     license_expires_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     campaigns = relationship("Campaign", back_populates="owner", cascade="all, delete-orphan")
     proxies = relationship("Proxy", back_populates="owner", cascade="all, delete-orphan")
@@ -51,9 +51,10 @@ class Campaign(Base):
     bounce_rate_pct = Column(Integer, default=30)              # %30 oturum hizli ciksin
     referrer_mix = Column(String(500), default="google:70,direct:20,social:10")
     mobile_ratio_pct = Column(Integer, default=65)             # %65 mobil UA
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    mode = Column(String(20), default="http")                  # "http" | "browser" (GSC)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     owner = relationship("User", back_populates="campaigns")
     visits = relationship("Visit", back_populates="campaign", cascade="all, delete-orphan")
@@ -70,7 +71,7 @@ class Proxy(Base):
     protocol = Column(String(20), default="http")
     status = Column(String(20), default="unknown")
     last_checked = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     owner = relationship("User", back_populates="proxies")
@@ -82,7 +83,7 @@ class Visit(Base):
     id = Column(Integer, primary_key=True, index=True)
     campaign_id = Column(Integer, ForeignKey("campaigns.id"))
     proxy_id = Column(Integer, nullable=True)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     ended_at = Column(DateTime, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     pages_visited = Column(Integer, default=1)
@@ -99,7 +100,7 @@ class Log(Base):
     campaign_id = Column(Integer, nullable=True)
     level = Column(String(20), default="info")
     message = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class RankCheck(Base):
@@ -109,7 +110,7 @@ class RankCheck(Base):
     campaign_id = Column(Integer, ForeignKey("campaigns.id"))
     keyword = Column(String(500), nullable=False)
     rank = Column(Integer, nullable=True)
-    checked_at = Column(DateTime, default=datetime.utcnow)
+    checked_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 # ── Pydantic Schemas ────────────────────────────────────────────────────────────
@@ -131,6 +132,23 @@ class CampaignCreate(BaseModel):
     bounce_rate_pct: int = 30
     referrer_mix: str = "google:70,direct:20,social:10"
     mobile_ratio_pct: int = 65
+    mode: str = "http"
+
+    @model_validator(mode="after")
+    def check_ranges(self):
+        if self.session_duration_min > self.session_duration_max:
+            raise ValueError("session_duration_min, max değerinden büyük olamaz")
+        if self.pages_per_session_min > self.pages_per_session_max:
+            raise ValueError("pages_per_session_min, max değerinden büyük olamaz")
+        if not (0 <= self.bounce_rate_pct <= 100):
+            raise ValueError("bounce_rate_pct 0-100 arasında olmalı")
+        if not (0 <= self.mobile_ratio_pct <= 100):
+            raise ValueError("mobile_ratio_pct 0-100 arasında olmalı")
+        if not (1 <= self.concurrent_workers <= 50):
+            raise ValueError("concurrent_workers 1-50 arasında olmalı")
+        if self.active_hours_start == self.active_hours_end:
+            raise ValueError("active_hours_start ve end aynı olamaz")
+        return self
 
 
 class CampaignUpdate(BaseModel):
@@ -150,6 +168,7 @@ class CampaignUpdate(BaseModel):
     bounce_rate_pct: Optional[int] = None
     referrer_mix: Optional[str] = None
     mobile_ratio_pct: Optional[int] = None
+    mode: Optional[str] = None
 
 
 class CampaignResponse(BaseModel):
@@ -170,6 +189,7 @@ class CampaignResponse(BaseModel):
     bounce_rate_pct: int = 30
     referrer_mix: str = "google:70,direct:20,social:10"
     mobile_ratio_pct: int = 65
+    mode: str = "http"
     status: str
     total_visits: int
     successful_visits: int

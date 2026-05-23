@@ -3,7 +3,7 @@ Auth modülü — JWT token üretimi + doğrulama, şifre hash
 """
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
@@ -17,7 +17,15 @@ from database import get_db
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-SECRET_KEY = os.environ.get("JWT_SECRET", "changeme-use-env-var-in-production-32chars!")
+SECRET_KEY = os.environ.get("JWT_SECRET", "")
+if not SECRET_KEY:
+    import warnings
+    SECRET_KEY = "changeme-use-env-var-in-production-32chars!"
+    warnings.warn(
+        "[GÜVENLİK] JWT_SECRET env degiskeni ayarlanmamis! "
+        "Uretimde mutlaka guvenli bir deger belirleyin.",
+        RuntimeWarning, stacklevel=2,
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 gün
 
@@ -42,7 +50,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -91,6 +99,6 @@ async def require_active_license(user=Depends(get_current_user)):
         return user
     if user.plan == "free":
         raise HTTPException(status_code=403, detail="Bu özellik için Pro lisans gerekli")
-    if user.license_expires_at and user.license_expires_at < datetime.utcnow():
+    if user.license_expires_at and user.license_expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise HTTPException(status_code=403, detail="Lisansınızın süresi dolmuş — yenileyin")
     return user

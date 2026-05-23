@@ -2,5 +2,5 @@
   "telegram_token": "8735214630:AAEM18fIpKWOuVImKko2Tar9llcKZtE3dt4",
   "telegram_chat_id": "7733192013",
   "serpapi_key": "11d5c6e01f2fc93d153f9252fda3c5ef48589877c44f21c9bbfdd277609080cc",
-  "license_server": "http://localhost:8001"
+  "license_server": "https://requesthitbot.com"
 }

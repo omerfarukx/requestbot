@@ -14,7 +14,6 @@ import Campaigns from "./pages/Campaigns";
 import Proxies from "./pages/Proxies";
 import Logs from "./pages/Logs";
 import Login from "./pages/Login";
-import Register from "./pages/Register";
 import Admin from "./pages/Admin";
 import { AuthProvider, useAuth } from "./lib/auth";
 
@@ -164,13 +163,19 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
           <Route path="/" element={<Protected><AppShell><Dashboard /></AppShell></Protected>} />
           <Route path="/campaigns" element={<Protected><AppShell><Campaigns /></AppShell></Protected>} />
           <Route path="/proxies" element={<Protected><AppShell><Proxies /></AppShell></Protected>} />
           <Route path="/logs" element={<Protected><AppShell><Logs /></AppShell></Protected>} />
           <Route path="/admin" element={<Protected adminOnly><AppShell><Admin /></AppShell></Protected>} />
           <Route path="/sso" element={<SsoRedirect />} />
+          <Route path="*" element={
+            <div className="min-h-screen flex flex-col items-center justify-center bg-gray-950 text-white gap-4">
+              <span className="text-6xl font-black text-gray-700">404</span>
+              <p className="text-gray-500">Sayfa bulunamadı</p>
+              <a href="/" className="text-indigo-400 hover:text-indigo-300 text-sm">← Ana sayfaya dön</a>
+            </div>
+          } />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

@@ -37,7 +37,7 @@ frontend.log
 Thumbs.db
 
 # Build artifacts
-*.spec
+# *.spec  -- spec dosyasi repo'da tutulsun
 RequestBot.exe
 fix_pass.py
 create_shortcut.py

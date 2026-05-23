@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   Edit2,
+  Globe,
+  Monitor,
   Pause,
   Play,
   Plus,
@@ -30,6 +32,7 @@ const defaultForm: CampaignCreate = {
   daily_visit_target: null,
   pages_per_session_min: 2,
   pages_per_session_max: 8,
+  mode: "http",
 };
 
 function Badge({ status }: { status: Campaign["status"] }) {
@@ -84,6 +87,7 @@ function CampaignModal({ editing, onClose, onSave }: ModalProps) {
         daily_visit_target: editing.daily_visit_target,
         pages_per_session_min: editing.pages_per_session_min,
         pages_per_session_max: editing.pages_per_session_max,
+        mode: editing.mode ?? "http",
       }
       : defaultForm
   );
@@ -150,6 +154,34 @@ function CampaignModal({ editing, onClose, onSave }: ModalProps) {
             />
             <p className="text-gray-600 text-xs mt-1">Her oturumda rastgele biri seçilir</p>
           </Field>
+          {/* Mod Seçici */}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => set("mode", "http")}
+              className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-sm font-medium transition-all ${(form as any).mode !== "browser"
+                ? "border-brand-500 bg-brand-500/10 text-brand-400"
+                : "border-gray-700 text-gray-500 hover:border-gray-600"
+                }`}
+            >
+              <Globe size={18} />
+              <span>HTTP Modu</span>
+              <span className="text-[10px] font-normal text-gray-500">Hızlı · curl_cffi</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => set("mode", "browser")}
+              className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-sm font-medium transition-all ${(form as any).mode === "browser"
+                ? "border-purple-500 bg-purple-500/10 text-purple-400"
+                : "border-gray-700 text-gray-500 hover:border-gray-600"
+                }`}
+            >
+              <Monitor size={18} />
+              <span>Browser Modu</span>
+              <span className="text-[10px] font-normal text-gray-500">GSC organik tıklama</span>
+            </button>
+          </div>
+
           <Field label="Arama Motoru">
             <select
               className={inputCls}
@@ -388,11 +420,18 @@ export default function Campaigns() {
                     <Badge status={c.status} />
                   </div>
                   <p className="text-gray-500 text-xs truncate">{c.target_url}</p>
-                  {c.keyword && (
-                    <p className="text-gray-600 text-xs mt-0.5">
-                      🔍 {c.keyword.split(",").map(k => k.trim()).join(" · ")} · {c.search_engine}
-                    </p>
-                  )}
+                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                    {c.keyword && (
+                      <p className="text-gray-600 text-xs">
+                        🔍 {c.keyword.split(",").map(k => k.trim()).join(" · ")} · {c.search_engine}
+                      </p>
+                    )}
+                    {c.mode === "browser" && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                        🖥 GSC Browser
+                      </span>
+                    )}
+                  </div>
                   <div className="flex gap-4 mt-3 text-xs">
                     <span className="text-gray-400">
                       Toplam:{" "}

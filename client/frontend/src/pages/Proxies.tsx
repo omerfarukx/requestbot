@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, Shield, Trash2, Upload, Zap } from "lucide-react";
+import { RefreshCw, Shield, Trash2, Upload, Zap, Activity } from "lucide-react";
 import { api, type Proxy } from "../lib/api";
 
 function StatusDot({ status }: { status: Proxy["status"] }) {
-  const map = {
+  const map: Record<string, string> = {
     unknown: "bg-gray-500",
     active: "bg-green-400",
     dead: "bg-red-500",
+    cooldown: "bg-orange-400",
   };
   return (
     <span
-      className={`inline-block w-2 h-2 rounded-full ${map[status]}`}
+      className={`inline-block w-2 h-2 rounded-full ${map[status] ?? "bg-gray-500"}`}
       title={status}
     />
   );
@@ -24,22 +25,29 @@ export default function Proxies() {
   const [testing, setTesting] = useState(false);
   const [wsKey, setWsKey] = useState("");
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
-  const [stats, setStats] = useState({ active: 0, dead: 0, unknown: 0 });
+  const [stats, setStats] = useState({ active: 0, dead: 0, unknown: 0, cooldown: 0 });
+  const [usage, setUsage] = useState<Record<number, { visits: number; estimated_mb: number }>>({});
 
   const showToast = (msg: string, ok = true) => {
     setToast({ msg, ok });
     setTimeout(() => setToast(null), 3500);
   };
 
+  const TOTAL_MB = 10240; // 10 GB proxy paketi
+
   const load = async () => {
     try {
-      const list = await api.proxies.list();
+      const [list, usageList] = await Promise.all([api.proxies.list(), api.proxies.usage()]);
       setProxies(list);
       setStats({
         active: list.filter((p) => p.status === "active").length,
         dead: list.filter((p) => p.status === "dead").length,
         unknown: list.filter((p) => p.status === "unknown").length,
+        cooldown: list.filter((p) => p.status === "cooldown").length,
       });
+      const usageMap: Record<number, { visits: number; estimated_mb: number }> = {};
+      usageList.forEach((u) => { usageMap[u.proxy_id] = u; });
+      setUsage(usageMap);
     } catch { }
   };
 
@@ -119,6 +127,7 @@ export default function Proxies() {
           <p className="text-gray-500 text-sm mt-1">
             {proxies.length} proxy ·{" "}
             <span className="text-green-400">{stats.active} aktif</span> ·{" "}
+            <span className="text-orange-400">{stats.cooldown} cooldown</span> ·{" "}
             <span className="text-red-400">{stats.dead} ölü</span> ·{" "}
             <span className="text-gray-400">{stats.unknown} bilinmiyor</span>
           </p>
@@ -143,6 +152,44 @@ export default function Proxies() {
           )}
         </div>
       </div>
+
+      {/* Proxy Kullanım Özeti */}
+      {Object.keys(usage).length > 0 && (() => {
+        const totalMb = Object.values(usage).reduce((s, u) => s + u.estimated_mb, 0);
+        const totalVisits = Object.values(usage).reduce((s, u) => s + u.visits, 0);
+        const pct = Math.min((totalMb / TOTAL_MB) * 100, 100);
+        const remaining = Math.max(TOTAL_MB - totalMb, 0);
+        return (
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium text-gray-300">
+                <Activity size={15} />
+                Tahmini Proxy Kullanımı
+              </div>
+              <span className="text-xs text-gray-500">{totalVisits} ziyaret</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${pct > 80 ? "bg-red-500" : pct > 50 ? "bg-yellow-500" : "bg-green-500"
+                    }`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="text-xs font-mono text-gray-400 whitespace-nowrap">
+                {totalMb >= 1024 ? `${(totalMb / 1024).toFixed(2)} GB` : `${totalMb.toFixed(0)} MB`}
+                {" / 10 GB"}
+              </span>
+            </div>
+            <p className="text-xs text-gray-600">
+              Kalan: <span className="text-gray-400 font-medium">
+                {remaining >= 1024 ? `~${(remaining / 1024).toFixed(2)} GB` : `~${remaining.toFixed(0)} MB`}
+              </span>
+              {" "} · Her browser session ≈ 2 MB (tahmini)
+            </p>
+          </div>
+        );
+      })()}
 
       {/* Webshare hızlı yenileme kartı */}
       <div className="bg-gray-900 border border-indigo-500/30 rounded-xl p-5 space-y-3">
@@ -208,6 +255,7 @@ export default function Proxies() {
                 <th className="px-4 py-3 text-left">Proxy</th>
                 <th className="px-4 py-3 text-left">Protokol</th>
                 <th className="px-4 py-3 text-left">Durum</th>
+                <th className="px-4 py-3 text-left">Kullanım</th>
                 <th className="px-4 py-3 text-left">Son Kontrol</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -233,9 +281,16 @@ export default function Proxies() {
                     <div className="flex items-center gap-2">
                       <StatusDot status={p.status} />
                       <span className="text-gray-400 text-xs capitalize">
-                        {p.status === "unknown" ? "Bilinmiyor" : p.status === "active" ? "Aktif" : "Ölü"}
+                        {p.status === "unknown" ? "Bilinmiyor" : p.status === "active" ? "Aktif" : p.status === "cooldown" ? "Cooldown" : "Ölü"}
                       </span>
                     </div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-500 font-mono">
+                    {usage[p.id]
+                      ? `${usage[p.id].estimated_mb >= 1024
+                        ? (usage[p.id].estimated_mb / 1024).toFixed(2) + " GB"
+                        : usage[p.id].estimated_mb + " MB"} (${usage[p.id].visits} ziyaret)`
+                      : "—"}
                   </td>
                   <td className="px-4 py-3 text-gray-600 text-xs">
                     {p.last_checked

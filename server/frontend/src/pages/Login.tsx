@@ -74,12 +74,17 @@ export default function Login() {
             {loading ? "Giriş yapılıyor…" : "Giriş Yap"}
           </button>
 
-          <p className="text-center text-gray-500 text-xs pt-2">
-            Hesabın yok mu?{" "}
-            <Link to="/register" className="text-brand-400 hover:text-brand-300">
-              Kayıt ol
+          <div className="flex items-center justify-between pt-1">
+            <p className="text-gray-500 text-xs">
+              Hesabın yok mu?{" "}
+              <Link to="/register" className="text-brand-400 hover:text-brand-300">
+                Kayıt ol
+              </Link>
+            </p>
+            <Link to="/forgot-password" className="text-gray-500 hover:text-brand-400 text-xs transition-colors">
+              Şifremi unuttum
             </Link>
-          </p>
+          </div>
         </form>
       </div>
     </div>

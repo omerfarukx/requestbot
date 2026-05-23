@@ -4,7 +4,7 @@ Server modelleri:
 - Device  : machine_id <-> user eslesmesi (tek cihaz kilidi)
 - Order   : PayTR odeme kaydi
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Float
@@ -28,10 +28,13 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     license_expires_at = Column(DateTime, nullable=True)
     reset_credits = Column(Integer, default=0)          # cihaz sifirlama paketi
-    created_at = Column(DateTime, default=datetime.utcnow)
+    password_reset_token = Column(String(64), nullable=True, index=True)
+    password_reset_expires = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     devices = relationship("Device", back_populates="user", cascade="all, delete-orphan")
     orders = relationship("Order", back_populates="user", cascade="all, delete-orphan")
+    activity_logs = relationship("ActivityLog", back_populates="user", cascade="all, delete-orphan")
 
 
 class Device(Base):
@@ -43,11 +46,36 @@ class Device(Base):
     machine_id = Column(String(128), nullable=False)
     hostname = Column(String(255), nullable=True)
     os_info = Column(String(255), nullable=True)
-    first_seen = Column(DateTime, default=datetime.utcnow)
-    last_seen = Column(DateTime, default=datetime.utcnow)
+    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    last_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     last_ip = Column(String(64), nullable=True)
 
     user = relationship("User", back_populates="devices")
+
+
+class PageView(Base):
+    """Anonim sayfa görüntüleme logu (giriş gerektirmez)."""
+    __tablename__ = "page_views"
+
+    id = Column(Integer, primary_key=True, index=True)
+    path = Column(String(200), nullable=False)          # /  /login  /register vb.
+    ip = Column(String(64), nullable=True)
+    referrer = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True)
+
+
+class ActivityLog(Base):
+    """login / download / bot_session / device_reset event loglari."""
+    __tablename__ = "activity_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    event = Column(String(50), nullable=False)   # login|register|download|bot_session|device_reset
+    ip = Column(String(64), nullable=True)
+    detail = Column(String(300), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), index=True)
+
+    user = relationship("User", back_populates="activity_logs")
 
 
 class Order(Base):
@@ -63,7 +91,7 @@ class Order(Base):
     status = Column(String(20), default="pending")      # pending | success | failed
     paid_at = Column(DateTime, nullable=True)
     raw_callback = Column(String(2000), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     user = relationship("User", back_populates="orders")
 
@@ -115,12 +143,20 @@ class LicenseValidateResponse(BaseModel):
 
 class DeviceResponse(BaseModel):
     id: int
-    machine_id: str
     hostname: Optional[str]
     os_info: Optional[str]
     first_seen: datetime
     last_seen: datetime
     last_ip: Optional[str]
+    model_config = {"from_attributes": True}
+
+
+class ActivityLogResponse(BaseModel):
+    id: int
+    event: str
+    ip: Optional[str]
+    detail: Optional[str]
+    created_at: datetime
     model_config = {"from_attributes": True}
 
 

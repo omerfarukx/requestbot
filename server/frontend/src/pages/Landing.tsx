@@ -1,25 +1,13 @@
 import { Link } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import * as THREE from "three";
+import { trackPageView } from "../lib/api";
+import { motion, useInView } from "framer-motion";
 import {
-  ArrowRight,
-  BarChart3,
-  Bot,
-  Check,
-  ChevronDown,
-  Cpu,
-  Download,
-  Globe,
-  MessageSquare,
-  Rocket,
-  Send,
-  Shield,
-  Sparkles,
-  Target,
-  TrendingUp,
-  Users,
-  Zap,
+  ArrowRight, BarChart3, Bot, Check, ChevronDown, Cpu,
+  Download, Globe, Menu, MessageSquare, Rocket, Send, Shield,
+  Sparkles, Target, TrendingUp, X, Zap,
 } from "lucide-react";
-import BotIllustration from "../components/BotIllustration";
 
 const FEATURES = [
   { icon: Target, title: "SerpAPI ile Sıralama Takibi", desc: "Anahtar kelimeleriniz Google'da kaçıncı sırada — gerçek zamanlı.", color: "from-blue-500 to-cyan-500" },
@@ -106,46 +94,211 @@ const FAQS = [
   },
 ];
 
-const PLANS = [
-  {
-    name: "Pro",
-    price: "299",
-    period: "ay",
-    badge: "POPÜLER",
-    badgeColor: "bg-blue-500",
-    features: [
-      "5 kampanya",
-      "Sınırsız ziyaret",
-      "Webshare proxy entegrasyonu",
-      "Telegram bot komutları",
-      "Saatlik istatistikler",
-      "E-posta destek",
-    ],
-    cta: "Pro'yu Seç",
-    highlight: false,
-  },
-  {
-    name: "Agency",
-    price: "799",
-    period: "ay",
-    badge: "EN İYİ DEĞER",
-    badgeColor: "bg-purple-500",
-    features: [
-      "50 kampanya",
-      "Sınırsız ziyaret + proxy",
-      "Çoklu Webshare hesabı",
-      "Öncelikli destek",
-      "Beyaz etiket raporlar",
-      "API erişimi",
-    ],
-    cta: "Agency'yi Seç",
-    highlight: true,
-  },
+type PricePeriod = "daily" | "monthly" | "yearly";
+
+const PRICING: Record<PricePeriod, { label: string; price: string; unit: string; saving: string | null; savingAmt: string | null; badge: string | null }> = {
+  daily: { label: "Günlük Lisans", price: "300", unit: "gün", saving: null, savingAmt: null, badge: null },
+  monthly: { label: "Aylık Lisans", price: "5.000", unit: "ay", saving: "%44", savingAmt: "4.000 ₺", badge: "EN POPÜLER" },
+  yearly: { label: "Yıllık Lisans", price: "40.000", unit: "yıl", saving: "%63", savingAmt: "69.500 ₺", badge: "EN İYİ DEĞER" },
+};
+
+const PLAN_FEATURES = [
+  "Sınırsız kampanya",
+  "Sınırsız ziyaret simülasyonu",
+  "Webshare & özel proxy desteği",
+  "Telegram bot komutları",
+  "Canlı istatistikler & raporlar",
+  "Donanım parmak izi koruması",
+  "7/24 destek",
 ];
 
+// ── Three.js 3D Hero Visual ──────────────────────────────────────────────────
+
+function HeroVisual() {
+  const mountRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = mountRef.current;
+    if (!el) return;
+
+    const W = el.offsetWidth;
+    const H = el.offsetHeight;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 100);
+    camera.position.z = 6;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(W, H);
+    renderer.setClearColor(0, 0);
+    renderer.domElement.style.cssText = "position:absolute;inset:0;width:100%;height:100%;border-radius:1.5rem;";
+    el.appendChild(renderer.domElement);
+
+    // ── 1. Fibonacci dot-globe ──────────────────────────────────────────────
+    const GLOBE_R = 1.7;
+    const GLOBE_N = 2200;
+    const gPos = new Float32Array(GLOBE_N * 3);
+    const gCol = new Float32Array(GLOBE_N * 3);
+    const PHI = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < GLOBE_N; i++) {
+      const y = 1 - (i / (GLOBE_N - 1)) * 2;
+      const r = Math.sqrt(1 - y * y);
+      const theta = PHI * i;
+      gPos[i * 3] = Math.cos(theta) * r * GLOBE_R;
+      gPos[i * 3 + 1] = y * GLOBE_R;
+      gPos[i * 3 + 2] = Math.sin(theta) * r * GLOBE_R;
+      const t = (y + 1) / 2;
+      gCol[i * 3] = 0.38 + t * 0.28;
+      gCol[i * 3 + 1] = 0.28 + t * 0.12;
+      gCol[i * 3 + 2] = 0.85 + t * 0.15;
+    }
+    const globeGeo = new THREE.BufferGeometry();
+    globeGeo.setAttribute("position", new THREE.BufferAttribute(gPos, 3));
+    globeGeo.setAttribute("color", new THREE.BufferAttribute(gCol, 3));
+    const globe = new THREE.Points(globeGeo, new THREE.PointsMaterial({
+      size: 0.022, vertexColors: true, transparent: true, opacity: 0.9, sizeAttenuation: true,
+    }));
+    scene.add(globe);
+
+    // ── 2. Orbit rings (dot circles, each tilted) ───────────────────────────
+    const makeRing = (rad: number, n: number, color: number, tiltX: number, tiltZ: number) => {
+      const pos = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
+        pos[i * 3] = Math.cos(a) * rad;
+        pos[i * 3 + 2] = Math.sin(a) * rad;
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      const ring = new THREE.Points(g, new THREE.PointsMaterial({
+        size: 0.045, color, transparent: true, opacity: 0.65, sizeAttenuation: true,
+      }));
+      ring.rotation.x = tiltX;
+      ring.rotation.z = tiltZ;
+      return ring;
+    };
+    const ring1 = makeRing(2.3, 140, 0x818cf8, 1.1, 0.2);
+    const ring2 = makeRing(2.7, 90, 0xc084fc, 0.5, 0.8);
+    const ring3 = makeRing(2.0, 70, 0x38bdf8, 1.9, 0.4);
+    scene.add(ring1, ring2, ring3);
+
+    // ── 3. Background nebula ────────────────────────────────────────────────
+    const NEB_N = 600;
+    const nPos = new Float32Array(NEB_N * 3);
+    for (let i = 0; i < NEB_N; i++) {
+      nPos[i * 3] = (Math.random() - 0.5) * 14;
+      nPos[i * 3 + 1] = (Math.random() - 0.5) * 14;
+      nPos[i * 3 + 2] = (Math.random() - 0.5) * 6 - 2;
+    }
+    const nebGeo = new THREE.BufferGeometry();
+    nebGeo.setAttribute("position", new THREE.BufferAttribute(nPos, 3));
+    const nebula = new THREE.Points(nebGeo, new THREE.PointsMaterial({
+      size: 0.012, color: 0x6366f1, transparent: true, opacity: 0.35,
+    }));
+    scene.add(nebula);
+
+    // ── Mouse parallax ──────────────────────────────────────────────────────
+    let tgtX = 0, tgtY = 0, curX = 0, curY = 0;
+    const onMouse = (e: MouseEvent) => {
+      const rect = el.getBoundingClientRect();
+      tgtX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+      tgtY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+    };
+    window.addEventListener("mousemove", onMouse);
+
+    // ── Render loop ─────────────────────────────────────────────────────────
+    let raf: number;
+    const clock = new THREE.Clock();
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const t = clock.getElapsedTime();
+      curX += (tgtX - curX) * 0.04;
+      curY += (tgtY - curY) * 0.04;
+
+      globe.rotation.y = t * 0.14 + curX * 0.35;
+      globe.rotation.x = curY * 0.18;
+
+      ring1.rotation.y = t * 0.28;
+      ring2.rotation.y = -t * 0.18;
+      ring3.rotation.y = t * 0.22;
+
+      nebula.rotation.y = t * 0.018;
+      renderer.render(scene, camera);
+    };
+    tick();
+
+    // ── Resize ──────────────────────────────────────────────────────────────
+    const onResize = () => {
+      const w = el.offsetWidth, h = el.offsetHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("mousemove", onMouse);
+      window.removeEventListener("resize", onResize);
+      renderer.dispose();
+      if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  return (
+    <div ref={mountRef} className="relative h-[480px] lg:h-[560px]">
+      {/* Three.js canvas injected here */}
+      <motion.div animate={{ y: [-6, 6, -6] }} transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
+        className="absolute bottom-8 left-4 z-10 bg-gray-900/90 backdrop-blur-md border border-indigo-500/40 rounded-2xl px-4 py-3 shadow-2xl">
+        <div className="flex items-center gap-2.5">
+          <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          <span className="text-sm font-medium text-white">Bot aktif — 3 kampanya</span>
+        </div>
+      </motion.div>
+      <motion.div animate={{ y: [6, -6, 6] }} transition={{ repeat: Infinity, duration: 3.5, ease: "easeInOut", delay: 1 }}
+        className="absolute top-10 right-4 z-10 bg-gray-900/90 backdrop-blur-md border border-purple-500/40 rounded-2xl px-4 py-3 shadow-2xl">
+        <div className="flex items-center gap-2">
+          <TrendingUp size={14} className="text-green-400" />
+          <span className="text-sm font-medium text-white">Sıralama: <span className="text-green-400">#3 → #1</span></span>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function TiltCard({ children, className, style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width - 0.5;
+    const y = (e.clientY - rect.top) / rect.height - 0.5;
+    ref.current.style.transform = `perspective(800px) rotateY(${x * 12}deg) rotateX(${-y * 12}deg) scale3d(1.02,1.02,1.02)`;
+  }, []);
+  const handleMouseLeave = useCallback(() => {
+    if (!ref.current) return;
+    ref.current.style.transform = "perspective(800px) rotateY(0deg) rotateX(0deg) scale3d(1,1,1)";
+  }, []);
+  return (
+    <div
+      ref={ref}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      className={className}
+      style={{ ...style, transition: "transform 0.15s ease", transformStyle: "preserve-3d" }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function AnimatedNumber({ value, suffix }: { value: number; suffix: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const inView = useInView(ref, { once: true });
   const [n, setN] = useState(0);
   useEffect(() => {
+    if (!inView) return;
     const duration = 2000;
     const start = performance.now();
     let raf: number;
@@ -157,9 +310,9 @@ function AnimatedNumber({ value, suffix }: { value: number; suffix: string }) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [value]);
+  }, [inView, value]);
   return (
-    <span className="tabular-nums">
+    <span ref={ref} className="tabular-nums">
       {n.toLocaleString("tr-TR")}{suffix}
     </span>
   );
@@ -171,6 +324,7 @@ function FAQItem({ q, a }: { q: string; a: string }) {
     <div className="border border-gray-800 rounded-xl overflow-hidden bg-gray-900/50 hover:border-brand-500/30 transition-colors">
       <button
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
         className="w-full px-5 py-4 flex items-center justify-between text-left"
       >
         <span className="text-white font-medium text-sm">{q}</span>
@@ -188,17 +342,27 @@ function FAQItem({ q, a }: { q: string; a: string }) {
   );
 }
 
-export default function Landing() {
-  return (
-    <div className="min-h-screen bg-gray-950 text-white relative overflow-hidden">
-      {/* Background mesh + grid */}
-      <div className="fixed inset-0 mesh-bg pointer-events-none" />
-      <div className="fixed inset-0 bg-grid pointer-events-none opacity-50" />
+const fadeUp = {
+  hidden: { opacity: 0, y: 40 },
+  visible: (i: number = 0) => ({ opacity: 1, y: 0, transition: { delay: i * 0.1, duration: 0.6, ease: "easeOut" as const } }),
+};
 
-      {/* Floating background orbs */}
-      <div className="fixed top-1/4 -left-20 w-96 h-96 rounded-full bg-brand-500/20 blur-3xl animate-float-slow pointer-events-none" />
-      <div className="fixed top-2/3 -right-20 w-96 h-96 rounded-full bg-purple-500/20 blur-3xl animate-float-slow pointer-events-none" style={{ animationDelay: "3s" }} />
-      <div className="fixed bottom-1/4 left-1/3 w-72 h-72 rounded-full bg-pink-500/15 blur-3xl animate-float-slow pointer-events-none" style={{ animationDelay: "5s" }} />
+export default function Landing() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [pricePeriod, setPricePeriod] = useState<PricePeriod>("monthly");
+  useEffect(() => { trackPageView("/"); }, []);
+
+  return (
+    <div className="min-h-screen bg-[#030712] text-white relative overflow-x-hidden">
+      {/* Subtle grid overlay */}
+      <div className="fixed inset-0 pointer-events-none" style={{
+        backgroundImage: "linear-gradient(rgba(99,102,241,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.04) 1px, transparent 1px)",
+        backgroundSize: "60px 60px"
+      }} />
+
+      {/* Ambient glow orbs */}
+      <div className="fixed top-0 left-1/4 w-[600px] h-[600px] rounded-full bg-indigo-600/10 blur-[120px] pointer-events-none" />
+      <div className="fixed top-1/2 right-0 w-[500px] h-[500px] rounded-full bg-purple-600/10 blur-[120px] pointer-events-none" />
 
       <div className="relative z-10">
         {/* Nav */}
@@ -219,7 +383,7 @@ export default function Landing() {
               <a href="#pricing" className="hover:text-white transition-colors">Fiyatlar</a>
               <a href="#faq" className="hover:text-white transition-colors">SSS</a>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-3">
               <Link to="/login" className="text-sm text-gray-400 hover:text-white transition-colors">
                 Giriş
               </Link>
@@ -230,7 +394,38 @@ export default function Landing() {
                 Ücretsiz Başla
               </Link>
             </div>
+            {/* Mobile hamburger */}
+            <button
+              className="md:hidden p-2 text-gray-400 hover:text-white transition-colors"
+              onClick={() => setMobileOpen(!mobileOpen)}
+              aria-label="Menüyü aç"
+            >
+              {mobileOpen ? <X size={22} /> : <Menu size={22} />}
+            </button>
           </div>
+          {/* Mobile dropdown */}
+          {mobileOpen && (
+            <div className="md:hidden border-t border-gray-800/50 px-6 py-4 space-y-4 animate-fade-up">
+              <div className="flex flex-col gap-3 text-sm text-gray-400">
+                <a href="#features" onClick={() => setMobileOpen(false)} className="hover:text-white transition-colors py-1">Özellikler</a>
+                <a href="#how" onClick={() => setMobileOpen(false)} className="hover:text-white transition-colors py-1">Nasıl Çalışır</a>
+                <a href="#pricing" onClick={() => setMobileOpen(false)} className="hover:text-white transition-colors py-1">Fiyatlar</a>
+                <a href="#faq" onClick={() => setMobileOpen(false)} className="hover:text-white transition-colors py-1">SSS</a>
+              </div>
+              <div className="flex flex-col gap-2 pt-2 border-t border-gray-800">
+                <Link to="/login" onClick={() => setMobileOpen(false)} className="text-sm text-gray-400 hover:text-white transition-colors py-1">
+                  Giriş Yap
+                </Link>
+                <Link
+                  to="/register"
+                  onClick={() => setMobileOpen(false)}
+                  className="px-4 py-2 bg-gradient-to-r from-brand-500 to-purple-500 text-white font-semibold rounded-lg text-sm text-center transition-all"
+                >
+                  Ücretsiz Başla
+                </Link>
+              </div>
+            </div>
+          )}
         </nav>
 
         {/* Hero */}
@@ -315,25 +510,35 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Right: Bot illustration */}
-            <div className="relative animate-fade-up delay-200">
-              <BotIllustration />
-            </div>
+            {/* Right: CSS 3D Hero Visual */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 1, ease: "easeOut", delay: 0.3 }}
+            >
+              <HeroVisual />
+            </motion.div>
           </div>
         </section>
 
         {/* Stats bar */}
         <section className="max-w-6xl mx-auto px-6 -mt-16 mb-20 relative z-20">
-          <div className="glass border border-gray-800 rounded-2xl p-8 grid grid-cols-2 md:grid-cols-4 gap-6">
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.8, duration: 0.7 }}
+            className="border border-indigo-500/20 rounded-2xl p-8 grid grid-cols-2 md:grid-cols-4 gap-6"
+            style={{ background: "rgba(15,15,30,0.8)", backdropFilter: "blur(20px)" }}
+          >
             {STATS.map((s, i) => (
-              <div key={s.label} className="text-center animate-fade-up" style={{ animationDelay: `${i * 100}ms` }}>
-                <div className="text-3xl md:text-4xl font-bold gradient-text">
+              <div key={s.label} className="text-center">
+                <div className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
                   <AnimatedNumber value={s.value} suffix={s.suffix} />
                 </div>
-                <p className="text-gray-500 text-xs mt-1 uppercase tracking-wide">{s.label}</p>
+                <p className="text-gray-500 text-xs mt-1 uppercase tracking-widest">{s.label}</p>
               </div>
             ))}
-          </div>
+          </motion.div>
         </section>
 
         {/* How it works */}
@@ -347,21 +552,29 @@ export default function Landing() {
           </div>
 
           <div className="grid md:grid-cols-3 gap-6 relative">
-            {/* Connecting line */}
-            <div className="hidden md:block absolute top-12 left-1/3 right-1/3 h-px bg-gradient-to-r from-transparent via-brand-500/50 to-transparent" />
-
+            <div className="hidden md:block absolute top-14 left-[38%] right-[38%] h-px bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent" />
             {STEPS.map((s, i) => (
-              <div
+              <TiltCard
                 key={s.title}
-                className="relative glass border border-gray-800 rounded-2xl p-6 card-hover animate-fade-up"
-                style={{ animationDelay: `${i * 150}ms` }}
+                className="relative rounded-2xl p-6 border border-gray-800/60 overflow-hidden"
+                style={{ background: "rgba(10,10,20,0.8)", backdropFilter: "blur(16px)" } as React.CSSProperties}
               >
-                <div className={`w-14 h-14 ${s.color} rounded-xl flex items-center justify-center mb-4 shadow-lg`}>
-                  <s.icon className="text-white" size={26} />
-                </div>
-                <h3 className="text-xl font-bold mb-2">{s.title}</h3>
-                <p className="text-gray-400 text-sm leading-relaxed">{s.desc}</p>
-              </div>
+                <motion.div
+                  variants={fadeUp}
+                  initial="hidden"
+                  whileInView="visible"
+                  viewport={{ once: true }}
+                  custom={i}
+                >
+                  <div className={`w-14 h-14 ${s.color} rounded-2xl flex items-center justify-center mb-5 shadow-xl`}>
+                    <s.icon className="text-white" size={26} />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2">{s.title}</h3>
+                  <p className="text-gray-400 text-sm leading-relaxed">{s.desc}</p>
+                  <div className="absolute inset-0 rounded-2xl opacity-0 hover:opacity-100 transition-opacity"
+                    style={{ background: "linear-gradient(135deg, rgba(99,102,241,0.06), rgba(168,85,247,0.06))" }} />
+                </motion.div>
+              </TiltCard>
             ))}
           </div>
         </section>
@@ -378,18 +591,26 @@ export default function Landing() {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
             {FEATURES.map((f, i) => (
-              <div
+              <TiltCard
                 key={f.title}
-                className="group relative glass border border-gray-800 rounded-2xl p-6 card-hover overflow-hidden animate-fade-up"
-                style={{ animationDelay: `${i * 80}ms` }}
+                className="group relative rounded-2xl p-6 border border-gray-800/60 overflow-hidden cursor-default"
+                style={{ background: "rgba(8,8,20,0.9)", backdropFilter: "blur(16px)" } as React.CSSProperties}
               >
-                <div className={`absolute -top-12 -right-12 w-32 h-32 bg-gradient-to-br ${f.color} opacity-0 group-hover:opacity-20 blur-2xl transition-opacity`} />
-                <div className={`relative w-12 h-12 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform`}>
-                  <f.icon className="text-white" size={22} />
-                </div>
-                <h3 className="font-bold text-lg text-white mb-2">{f.title}</h3>
-                <p className="text-gray-400 text-sm leading-relaxed">{f.desc}</p>
-              </div>
+                <motion.div
+                  variants={fadeUp}
+                  initial="hidden"
+                  whileInView="visible"
+                  viewport={{ once: true }}
+                  custom={i * 0.5}
+                >
+                  <div className={`absolute -top-16 -right-16 w-40 h-40 bg-gradient-to-br ${f.color} opacity-0 group-hover:opacity-15 blur-3xl transition-all duration-500`} />
+                  <div className={`relative w-12 h-12 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center mb-4 shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all duration-300`}>
+                    <f.icon className="text-white" size={22} />
+                  </div>
+                  <h3 className="font-bold text-lg text-white mb-2">{f.title}</h3>
+                  <p className="text-gray-400 text-sm leading-relaxed">{f.desc}</p>
+                </motion.div>
+              </TiltCard>
             ))}
           </div>
         </section>
@@ -532,55 +753,89 @@ export default function Landing() {
         </section>
 
         {/* Pricing */}
-        <section id="pricing" className="max-w-5xl mx-auto px-6 py-20">
-          <div className="text-center mb-14">
+        <section id="pricing" className="max-w-3xl mx-auto px-6 py-20">
+          <div className="text-center mb-12">
             <span className="text-brand-400 text-sm font-semibold uppercase tracking-wider">Fiyatlandırma</span>
             <h2 className="text-4xl md:text-5xl font-bold mt-2">Şeffaf Fiyat, Sürpriz Yok</h2>
-            <p className="text-gray-500 mt-3">İhtiyacına göre plan seç. İstediğin zaman iptal et.</p>
+            <p className="text-gray-500 mt-3">Süreyi seç, hemen başla. İstediğin zaman iptal et.</p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-6">
-            {PLANS.map((p) => (
-              <div
-                key={p.name}
-                className={`relative glass border rounded-2xl p-8 card-hover ${p.highlight ? "border-purple-500/50" : "border-gray-800"
-                  }`}
-              >
-                {p.highlight && (
-                  <div className="absolute -inset-px rounded-2xl bg-gradient-to-r from-purple-500/30 via-pink-500/30 to-purple-500/30 -z-10 blur" />
-                )}
-                {p.badge && (
-                  <span
-                    className={`absolute -top-3 right-6 px-3 py-1 ${p.badgeColor} text-white text-xs font-semibold rounded-full shadow-lg`}
-                  >
-                    {p.badge}
-                  </span>
-                )}
-                <h3 className="text-2xl font-bold mb-1">{p.name}</h3>
-                <div className="flex items-baseline gap-1 mb-6">
-                  <span className="text-5xl font-bold gradient-text">{p.price}</span>
-                  <span className="text-gray-500 text-xl">₺</span>
-                  <span className="text-gray-500 ml-1">/ {p.period}</span>
+          {/* Period toggle */}
+          <div className="flex justify-center mb-10">
+            <div className="flex bg-gray-900 border border-gray-800 rounded-2xl p-1.5 gap-1">
+              {(["daily", "monthly", "yearly"] as PricePeriod[]).map((p) => {
+                const lbl = { daily: "Günlük", monthly: "Aylık", yearly: "Yıllık" };
+                const sav = { daily: null, monthly: "%44", yearly: "%63" };
+                return (
+                  <button key={p} onClick={() => setPricePeriod(p)}
+                    className={`relative px-5 py-2.5 rounded-xl text-sm font-semibold transition-all ${pricePeriod === p
+                        ? "bg-brand-500 text-black shadow-lg shadow-brand-500/30"
+                        : "text-gray-400 hover:text-white"
+                      }`}>
+                    {lbl[p]}
+                    {sav[p] && (
+                      <span className={`absolute -top-2.5 -right-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${pricePeriod === p ? "bg-green-400 text-black" : "bg-green-500/20 text-green-400"
+                        }`}>{sav[p]}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Single card */}
+          <div className="relative max-w-lg mx-auto">
+            <div className="absolute -inset-px rounded-3xl bg-gradient-to-br from-brand-500/40 via-purple-500/30 to-brand-500/20 -z-10 blur" />
+            <div className="relative glass border border-brand-500/30 rounded-3xl p-10 text-center">
+
+              {/* Badge */}
+              {PRICING[pricePeriod].badge && (
+                <span className="inline-block mb-4 px-3 py-1 bg-brand-500/20 border border-brand-500/40 text-brand-400 text-xs font-bold rounded-full uppercase tracking-wider">
+                  {PRICING[pricePeriod].badge}
+                </span>
+              )}
+
+              {/* Plan label */}
+              <p className="text-gray-500 text-sm mb-4">{PRICING[pricePeriod].label}</p>
+
+              {/* Price */}
+              <div className="flex items-end justify-center gap-2 mb-2">
+                <motion.span key={pricePeriod}
+                  initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }}
+                  className="text-7xl font-black gradient-text tabular-nums leading-none">
+                  {PRICING[pricePeriod].price}
+                </motion.span>
+                <div className="mb-2 text-left">
+                  <div className="text-2xl font-bold text-gray-300">₺</div>
+                  <div className="text-gray-500 text-sm">/ {PRICING[pricePeriod].unit}</div>
                 </div>
-                <ul className="space-y-3 mb-8">
-                  {p.features.map((f) => (
-                    <li key={f} className="flex items-center gap-2 text-sm text-gray-300">
-                      <Check size={15} className="text-brand-400 flex-shrink-0" />
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-                <Link
-                  to="/register"
-                  className={`block text-center px-4 py-3.5 rounded-xl font-semibold transition-all hover:scale-[1.02] ${p.highlight
-                    ? "bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 text-white shadow-lg shadow-purple-500/40"
-                    : "bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-400 hover:to-brand-500 text-white shadow-lg shadow-brand-500/40"
-                    }`}
-                >
-                  {p.cta}
-                </Link>
               </div>
-            ))}
+
+              {/* Savings */}
+              {PRICING[pricePeriod].saving ? (
+                <motion.p key={pricePeriod + "s"} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  className="text-green-400 text-sm font-medium mb-8">
+                  Günlük fiyata göre <strong>{PRICING[pricePeriod].savingAmt}</strong> tasarruf
+                  &nbsp;—&nbsp;<strong>{PRICING[pricePeriod].saving}</strong> indirim
+                </motion.p>
+              ) : (
+                <p className="text-gray-600 text-sm mb-8">Bağlılık yok — özgürce dene.</p>
+              )}
+
+              {/* Features */}
+              <ul className="space-y-3 mb-8 text-left">
+                {PLAN_FEATURES.map((f) => (
+                  <li key={f} className="flex items-center gap-3 text-sm text-gray-300">
+                    <Check size={15} className="text-brand-400 flex-shrink-0" />{f}
+                  </li>
+                ))}
+              </ul>
+
+              <Link to="/register"
+                className="block text-center px-4 py-4 rounded-xl font-bold text-base bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-400 hover:to-brand-500 text-white shadow-lg shadow-brand-500/40 transition-all hover:scale-[1.02]">
+                Hemen Başla →
+              </Link>
+            </div>
           </div>
 
           <div className="text-center mt-8 p-4 glass border border-gray-800 rounded-xl max-w-md mx-auto">
@@ -661,8 +916,18 @@ export default function Landing() {
               <div>
                 <h4 className="text-white text-sm font-semibold mb-3">İletişim</h4>
                 <ul className="space-y-2 text-xs text-gray-500">
-                  <li className="flex items-center gap-1.5"><MessageSquare size={12} /> Destek</li>
-                  <li className="flex items-center gap-1.5"><Send size={12} /> @requestbot</li>
+                  <li>
+                    <a href="https://t.me/requestbotdestek" target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 hover:text-white transition-colors">
+                      <MessageSquare size={12} /> Destek (Telegram)
+                    </a>
+                  </li>
+                  <li>
+                    <a href="https://t.me/requestbot" target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 hover:text-white transition-colors">
+                      <Send size={12} /> @requestbot
+                    </a>
+                  </li>
                 </ul>
               </div>
             </div>
